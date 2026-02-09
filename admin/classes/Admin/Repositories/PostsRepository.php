@@ -22,7 +22,6 @@ final class PostsRepository
     // Admin
     public function getAll(): array
     {
-        // Added meta_title and meta_description
         $sql = "SELECT id, title, slug, content, status, featured_media_id, published_at, created_at, meta_title, meta_description
             FROM posts
             WHERE deleted_at IS NULL
@@ -52,7 +51,6 @@ final class PostsRepository
     {
         $limit = max(1, min(50, $limit));
 
-        // SELECT * already includes SEO fields automatically
         $sql = "SELECT * FROM posts
             WHERE status = 'published' 
             AND published_at <= NOW()
@@ -67,7 +65,6 @@ final class PostsRepository
     // Frontend: detailpagina /posts/{id}
     public function findPublishedBySlug(string $slug): ?array
     {
-        // Added meta_title and meta_description
         $sql = "SELECT id, title, slug, content, status, featured_media_id, created_at, meta_title, meta_description
                 FROM posts
                 WHERE slug = :slug AND status = 'published'
@@ -117,9 +114,11 @@ final class PostsRepository
         string $status,
         ?int $featuredMediaId = null,
         ?string $publishedAt = null,
-        ?string $metaTitle = null,      // New
-        ?string $metaDescription = null // New
+        ?string $metaTitle = null,
+        ?string $metaDescription = null
     ): void {
+
+        $this->createRevision($id);
         $slug = $this->slugService->createSlug($title);
 
         $sql = "UPDATE posts
@@ -202,4 +201,96 @@ final class PostsRepository
 
         return $stmt->execute([':post_id' => $postId]);
     }
+
+    // revisibeheer - examen
+
+    private function createRevision(int $postId): void
+    {
+        $sql = "INSERT INTO post_revisions (post_id, title, content, meta_title, meta_description, featured_media_id)
+            SELECT id, title, content, meta_title, meta_description, featured_media_id
+            FROM posts WHERE id = :id";
+        $this->pdo->prepare($sql)->execute(['id' => $postId]);
+
+        $limitSql = "DELETE FROM post_revisions 
+                 WHERE post_id = :id 
+                 AND id NOT IN (
+                     SELECT id FROM (
+                         SELECT id FROM post_revisions WHERE post_id = :id_inner 
+                         ORDER BY created_at DESC LIMIT 3
+                     ) AS tmp
+                 )";
+        $this->pdo->prepare($limitSql)->execute(['id' => $postId, 'id_inner' => $postId]);
+    }
+
+    private function limitRevisions(int $postId): void
+    {
+        $sql = "DELETE FROM post_revisions 
+                WHERE post_id = :post_id 
+                AND id NOT IN (
+                    SELECT id FROM (
+                        SELECT id FROM post_revisions 
+                        WHERE post_id = :post_id_inner 
+                        ORDER BY created_at DESC 
+                        LIMIT 3
+                    ) AS tmp
+                )";
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute([
+            'post_id' => $postId,
+            'post_id_inner' => $postId
+        ]);
+    }
+
+    public function getRevisions(int $postId): array
+    {
+        $sql = "SELECT * FROM post_revisions WHERE post_id = :post_id ORDER BY created_at DESC";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(['post_id' => $postId]);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    // restoreFunction
+
+    public function restoreRevision(int $revisionId): void
+    {
+        $sql = "SELECT * FROM post_revisions WHERE id = :id LIMIT 1";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(['id' => $revisionId]);
+        $revision = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$revision) {
+            return;
+        }
+
+        $this->createRevision((int)$revision['post_id']);
+
+        $updateSql = "UPDATE posts 
+                  SET title = :title, 
+                      content = :content, 
+                      meta_title = :meta_title, 
+                      meta_description = :meta_description, 
+                      featured_media_id = :featured_media_id
+                  WHERE id = :post_id";
+
+        $updateStmt = $this->pdo->prepare($updateSql);
+        $updateStmt->execute([
+            'title'             => $revision['title'],
+            'content'           => $revision['content'],
+            'meta_title'        => $revision['meta_title'],
+            'meta_description'  => $revision['meta_description'],
+            'featured_media_id' => $revision['featured_media_id'],
+            'post_id'           => $revision['post_id']
+        ]);
+    }
+
+    public function findRevisionById(int $id): ?array
+    {
+        $sql = "SELECT * FROM post_revisions WHERE id = :id LIMIT 1";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(['id' => $id]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    }
+
 }
