@@ -172,4 +172,34 @@ final class PostsRepository
 
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
+// post lock - examen
+    public function getPostWithLock(int $id)
+    {
+        $sql = "SELECT p.*, u.name AS locker_name 
+        FROM posts p 
+        LEFT JOIN users u ON p.locker_id = u.id 
+        WHERE p.id = :id";
+
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(['id' => $id]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+
+    public function updateLock($postId, $userId) {
+        $sql = "UPDATE posts SET locker_id = :user_id, locked_at = NOW() WHERE id = :post_id";
+
+        $stmt = $this->pdo->prepare($sql);
+        return $stmt->execute([
+            ':user_id' => $userId,
+            ':post_id' => $postId
+        ]);
+    }
+
+    public function releaseLock($postId) {
+        $sql = "UPDATE posts SET locker_id = NULL, locked_at = NULL WHERE id = :post_id";
+
+        $stmt = $this->pdo->prepare($sql);
+
+        return $stmt->execute([':post_id' => $postId]);
+    }
 }
